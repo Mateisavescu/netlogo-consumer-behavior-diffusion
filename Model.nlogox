@@ -1,0 +1,1936 @@
+<?xml version="1.0" encoding="utf-8"?>
+<model version="NetLogo 7.0.4" snapToGrid="false">
+  <code><![CDATA[globals [
+new-adopters-this-tick
+  tick-25-adoption
+tick-50-adoption
+tick-75-adoption
+  group-adoption-variance
+]
+turtles-own [state
+  susceptibility
+  influencer?
+  aware-time
+  group-id
+  threshold
+  awareness-source
+  adoption-intent
+
+  seed-influencer?
+  adoption-source
+  intent-decay
+  novelty-sensitivity
+  price-sensitivity
+  risk-aversion
+  openness
+]
+undirected-link-breed [consumer-links consumer-link]
+directed-link-breed [influence-links influence-link]
+consumer-links-own [current-flow active? ]
+influence-links-own [current-flow active? ]
+
+
+to setup
+  clear-all
+  set-default-shape turtles "person"
+
+  ;; primul nod
+  make-node-with-group nobody random number-of-groups
+
+  ;; al doilea nod, conectat la primul
+  make-node-with-group turtle 0 random number-of-groups
+ask turtle 0 [
+  setxy -3 + random 2 0
+]
+
+ask turtle 1 [
+  setxy 3 + random 2 0
+]
+  resize-nodes
+  update-nodes
+  ask turtles [
+  set awareness-source "none"
+  set adoption-source "none"
+    set intent-decay -1
+]
+  setup-group-pens
+set new-adopters-this-tick 0
+  set tick-25-adoption 0
+set tick-50-adoption 0
+set tick-75-adoption 0
+set group-adoption-variance 0
+
+  reset-ticks
+end
+
+to reset-information
+  ask turtles [
+    set state "unaware"
+    set adoption-intent 0
+    set aware-time -1
+    set awareness-source "none"
+    set adoption-source "none"
+    set seed-influencer? false
+    set intent-decay -1
+     ;; openness, susceptibility, threshold raman neschimbate la reset
+    ;; sunt trasaturi de personalitate, nu stari
+  ]
+
+    ask (link-set consumer-links ) [
+    set active? false
+    set color gray
+    set current-flow 0
+  ]
+    ask (link-set influence-links) [
+    set active? false
+    set color violet
+    set current-flow 0
+  ]
+
+clear-all-plots
+  setup-group-pens
+  set new-adopters-this-tick 0
+  set tick-25-adoption 0
+set tick-50-adoption 0
+set tick-75-adoption 0
+  set group-adoption-variance 0
+  resize-nodes
+  update-nodes
+  reset-ticks
+end
+to-report find-partner-by-group [new-group]
+  let candidate-turtles no-turtles
+
+  ifelse random-float 1 < homophily [
+    set candidate-turtles turtles with [group-id = new-group]
+  ] [
+    set candidate-turtles turtles with [group-id != new-group]
+  ]
+
+  ;; fallback dacă setul ales e gol
+  if not any? candidate-turtles [
+    set candidate-turtles turtles
+  ]
+
+  if not any? candidate-turtles [
+    report nobody
+  ]
+
+  report preferentially-select-partner candidate-turtles
+end
+
+to-report preferentially-select-partner [candidate-turtles]
+  ;; 20% alegere random pentru a reduce efectul de hub extrem
+  if random-float 1 < 0.2 [
+    report one-of candidate-turtles
+  ]
+
+  let candidate-links consumer-links with [
+    member? end1 candidate-turtles or member? end2 candidate-turtles
+  ]
+
+  if any? candidate-links [
+    let chosen-link one-of candidate-links
+    let possible-ends [both-ends] of chosen-link
+    let valid-ends possible-ends with [member? self candidate-turtles]
+
+    if any? valid-ends [
+      report one-of valid-ends
+    ]
+  ]
+
+  report one-of candidate-turtles
+end
+
+to create-network
+  ask (link-set consumer-links influence-links)
+   [
+    set color grey
+    set active? false
+    set current-flow 0
+  ]
+
+   let new-group random number-of-groups
+  let partner find-partner-by-group new-group
+  make-node-with-group partner new-group
+
+  resize-nodes
+  update-nodes
+
+
+
+  layout
+ tick
+  
+end
+
+to go
+   
+   
+
+  
+  diffusion
+  let current-adoption-pct 100 * count turtles with [state = "adopted"] / count turtles
+
+if tick-25-adoption = 0 and current-adoption-pct >= 25 [
+  set tick-25-adoption ticks
+]
+if tick-50-adoption = 0 and current-adoption-pct >= 50 [
+  set tick-50-adoption ticks
+]
+if tick-75-adoption = 0 and current-adoption-pct >= 75 [
+  set tick-75-adoption ticks
+]
+  let group-rates []
+let g 0
+while [g < number-of-groups] [
+  let total-group count turtles with [group-id = g]
+  if total-group > 0 [
+    set group-rates lput (100 * count turtles with [group-id = g and state = "adopted"] / total-group) group-rates
+  ]
+  set g g + 1
+]
+if length group-rates > 0 [
+  set group-adoption-variance variance group-rates
+]
+ update-nodes
+
+  update-influence-plot
+  update-my-plots
+  update-group-adoption-plot
+
+  update-adoption-source-plot
+  
+  update-adoption-speed-plot
+
+
+
+
+
+  tick
+  display
+end
+
+
+
+to make-node-with-group [old-node new-group]
+  create-turtles 1 [
+    set state "unaware"
+    set influencer? false
+    set seed-influencer? false
+    set shape "person"
+    set color white
+    set aware-time -1
+    set adoption-intent 0
+
+    set group-id new-group
+    set intent-decay -1
+    set novelty-sensitivity random-float 1
+    set price-sensitivity random-float 1
+    set risk-aversion random-float 1
+    ;; 0 = foarte sceptic/rezistent, 1 = foarte deschis/receptiv
+    set openness random-float 1
+    set susceptibility openness  ;; pastram pentru compatibilitate cu restul codului
+    set threshold 1 - openness   ;; threshold e opusul deschiderii
+
+
+let angle (360 / number-of-groups) * new-group
+let radius 8
+
+setxy
+  (radius * cos angle + random-float 2 - 1)
+  (radius * sin angle + random-float 2 - 1)
+
+
+    if old-node != nobody [
+      move-to old-node
+       rt random 360
+       fd 1
+
+      create-consumer-link-with old-node [
+        set color gray
+        set active? false
+        set current-flow 0
+
+      ]
+    ]
+  ]
+end
+
+to calculate-influencers
+  update-influencers
+  transform-links
+  resize-nodes
+  update-nodes
+
+
+end
+
+to resize-nodes
+  ask turtles [
+    let total-neighbors (turtle-set consumer-link-neighbors in-influence-link-neighbors out-influence-link-neighbors)
+    set size max (list 1 sqrt (count total-neighbors + 1))
+  ]
+end
+
+to update-influencers
+  ask turtles [
+    set influencer? false
+  ]
+
+  let avg-degree mean [count link-neighbors] of turtles
+  let sd-degree standard-deviation [count link-neighbors] of turtles
+
+  ask turtles with [count link-neighbors > avg-degree + 1 * sd-degree] [
+    set influencer? true
+  ]
+end
+
+to update-nodes
+
+
+  ask turtles [
+    if influencer? [
+      set shape "star"
+      if state = "adopted" [
+        set color red
+      ]
+      if state != "adopted" [
+        set color orange
+      ]
+    ]
+
+    if not influencer? [
+      set shape "person"
+      if state = "unaware" [
+  set color white
+]
+
+if state = "aware" [
+  set color blue
+]
+
+if state = "adopted" [
+  set color brown
+]
+
+    ]
+  ]
+end
+
+
+
+
+to-report limit-magnitude [number limit]
+  if number > limit [ report limit ]
+  if number < (- limit) [ report (- limit) ]
+  report number
+end
+
+to layout
+  repeat 10 [
+    let factor sqrt count turtles
+    let intra-links consumer-links  with [
+  [group-id] of end1 = [group-id] of end2
+]
+
+let inter-links consumer-links with [
+  [group-id] of end1 != [group-id] of end2
+]
+    layout-spring turtles intra-links 0.4 4 2
+layout-spring turtles inter-links 0.05 12 1
+    display
+  ]
+
+  let x-offset max [xcor] of turtles + min [xcor] of turtles
+  let y-offset max [ycor] of turtles + min [ycor] of turtles
+
+  set x-offset limit-magnitude x-offset 0.1
+  set y-offset limit-magnitude y-offset 0.1
+
+ask turtles [
+  setxy (xcor - x-offset / 2) (ycor - y-offset / 2)
+]
+end
+
+to diffusion
+    let adopters-before count turtles with [state = "adopted"]
+  ask turtles with [not influencer?] [
+
+    ;; definim vecinii
+    let peer-neighbors consumer-link-neighbors
+    let influencer-neighbors in-influence-link-neighbors
+
+;; UNAWARE->AWARE
+
+    if state = "unaware" [
+
+      let peer-share 0
+      if any? peer-neighbors [
+        set peer-share
+          count (peer-neighbors with [state = "aware" or state = "adopted"]) / count peer-neighbors
+      ]
+
+      let influencer-share 0
+      if use-influencers? and any? influencer-neighbors [
+        set influencer-share
+          count (influencer-neighbors with [state = "adopted" or state = "aware"]) / count influencer-neighbors
+      ]
+
+      let p-aware 0.005 + 0.12 * peer-share * peer-effect + influencer-effect * 0.16 * influencer-share + 0.06 * susceptibility
+      set p-aware min (list 1 p-aware)
+
+      if random-float 1 < p-aware [
+        set state "aware"
+        set aware-time ticks
+
+ ifelse peer-share = 0 and influencer-share = 0 [
+  set awareness-source "external"
+][
+  ifelse abs (peer-share - influencer-share) < 0.1 [
+    set awareness-source "mixed"
+  ][
+    ifelse peer-share > influencer-share
+      [ set awareness-source "peer" ]
+      [ set awareness-source "influencer" ]
+  ]
+]
+      ]
+    ]
+
+
+;;AWARE->ADOPTED
+
+    ;;CALCULAM SOCIAL SHARE
+    if state = "aware" and ticks > aware-time [
+
+
+      let social-share 0
+      if any? peer-neighbors [
+        set social-share
+          count (peer-neighbors with [state = "adopted"]) / count peer-neighbors
+      ]
+      ;;TRANSITIVITY
+      let same-group-adopted-peers peer-neighbors with [state = "adopted"
+        and group-id = [group-id] of myself ]
+
+let transitivity-bonus 0
+if count same-group-adopted-peers >= 2 [
+  let peer-peer-links count consumer-links with [
+    member? end1 same-group-adopted-peers and member? end2 same-group-adopted-peers
+  ]
+
+  let max-possible-links (count same-group-adopted-peers * (count same-group-adopted-peers - 1)) / 2
+
+  if max-possible-links > 0 [
+    set transitivity-bonus peer-peer-links / max-possible-links
+  ]
+]
+;;CALCULAM INFLUENCER-SHARE
+      let influencer-share 0
+      if use-influencers? and any? influencer-neighbors [
+        set influencer-share
+          count (influencer-neighbors with [state = "adopted"]) / count influencer-neighbors
+      ]
+    if ticks - aware-time > 1 [
+  ;; boost mic dacă tocmai a existat un semnal social recent
+  if intent-decay >= 0 and ticks - intent-decay = 1 [
+    set adoption-intent adoption-intent + 0.05
+  ]
+
+  ;; dacă nu a mai existat niciun impuls recent, începe scăderea interesului
+  if intent-decay = -1 or ticks - intent-decay >= 3 [
+    set adoption-intent adoption-intent * 0.97
+  ]
+]
+      ;;NOVELTY ------
+let global-adoption-share count turtles with [state = "adopted"] / count turtles
+;; decay exponential — bonusul scade gradual cu timpul de cand agentul e aware
+;; dupa 5 tickuri e aproape 0, dar nu dispare brusc
+let time-since-aware ticks - aware-time
+let novelty-bonus 0.05 * novelty-sensitivity * (1 - global-adoption-share)
+      * (e ^ (- 0.4 * time-since-aware))
+
+
+let intent-change 0
+
+
+
+
+
+let price-penalty price-sensitivity * product-price
+let risk-penalty risk-aversion * (1 - social-share)
+
+set intent-change intent-change + 0.16 * peer-effect * social-share
+set intent-change intent-change + novelty-bonus
+
+if use-influencers? [
+  set intent-change intent-change + 0.10 * influencer-effect * influencer-share
+]
+
+;; network externalities
+set intent-change intent-change + 0.04 * global-adoption-share 
+
+;; predispozitie individuala
+set intent-change intent-change + 0.08 * susceptibility
+
+;; bariere individuale
+set intent-change intent-change - 0.03 * threshold
+set intent-change intent-change - 0.10 * price-penalty
+set intent-change intent-change - 0.07 * risk-penalty
+
+;; efect de retea locala
+set intent-change intent-change + 0.03 * transitivity-bonus
+
+if social-share = 0 and influencer-share = 0 [
+  set intent-change intent-change - 0.04
+]
+
+set adoption-intent adoption-intent + intent-change
+set adoption-intent max (list 0 min (list 1 adoption-intent))
+
+
+      if adoption-intent > threshold [
+let p-adopt 0.1 + 0.5 * adoption-intent
+    set p-adopt min (list 1 p-adopt)
+  if random-float 1 < p-adopt [
+    set state "adopted"
+          ask (turtle-set consumer-link-neighbors in-influence-link-neighbors) [
+  set intent-decay ticks
+]
+
+
+  ifelse social-share = 0 and influencer-share = 0 [
+  set adoption-source "external"
+][
+  ifelse abs (social-share - influencer-share) < 0.1 [
+    set adoption-source "mixed"
+  ][
+    ifelse social-share > influencer-share
+      [ set adoption-source "peer" ]
+      [ set adoption-source "influencer" ]
+  ]
+]
+        ]
+]
+      ]
+    ]
+  ;;INFLUENCER STATES
+if use-influencers? [
+  ask turtles with [influencer? and not seed-influencer?] [
+    let influencer-neighbors in-influence-link-neighbors
+    let peer-neighbors consumer-link-neighbors
+
+    ;; câți influenceri din rețea au adoptat deja
+    let influencer-adoption-share 0
+    let all-influencers turtles with [influencer?]
+    if count all-influencers > 1 [
+      set influencer-adoption-share
+        count (all-influencers with [state = "adopted" and self != myself]) / (count all-influencers - 1)
+    ]
+
+    ;; câți followeri/vecini vorbesc despre produs
+    let buzz-share 0
+    if any? peer-neighbors [
+      set buzz-share
+        count (peer-neighbors with [state = "aware" or state = "adopted"]) / count peer-neighbors
+    ]
+
+    if state = "unaware" [
+      ;; se trezesc dacă văd trend printre influenceri sau buzz în rețea
+      let p-aware 0.01 + 0.25 * influencer-adoption-share + 0.10 * buzz-share
+
+      set p-aware min (list 1 p-aware)
+
+      if random-float 1 < p-aware [
+        set state "aware"
+        set aware-time ticks
+        ifelse influencer-adoption-share > buzz-share
+          [ set awareness-source "influencer" ]
+          [ set awareness-source "peer" ]
+      ]
+    ]
+
+    if state = "aware" and ticks > aware-time [
+      ;; adoptă dacă trendul e suficient de puternic
+      ;; nu le pasă de pret sau risc personal — e o decizie de brand/reputatie
+      let p-adopt 0.02 + 0.40 * influencer-adoption-share + 0.15 * buzz-share
+
+      ;; cu cât mai mulți influenceri au adoptat deja, cu atât e mai urgent să nu rămână în urmă
+      let fomo-bonus 0
+      if influencer-adoption-share > 0.3 [
+        set fomo-bonus 0.10 * influencer-adoption-share
+      ]
+
+      set p-adopt min (list 1 (p-adopt + fomo-bonus))
+
+      if random-float 1 < p-adopt [
+        set state "adopted"
+        set adoption-source "influencer"
+        ;; adoptarea lor dă un semnal puternic vecinilor consumatori
+        ask peer-neighbors [
+          set intent-decay ticks
+        ]
+      ]
+    ]
+  ]
+]
+  let adopters-after count turtles with [state = "adopted"]
+  set new-adopters-this-tick (adopters-after - adopters-before)
+end
+
+
+to set-initial-adopters
+  ask turtles [
+  set state "unaware"
+  set adoption-intent 0
+  set aware-time -1
+  set awareness-source "none"
+  set adoption-source "none"
+  set seed-influencer? false
+  set intent-decay -1
+  ]
+
+
+
+  let influencers turtles with [influencer?]
+  let n min (list initial-adopters count influencers)
+
+  ask n-of n influencers [
+    set state "adopted"
+    set seed-influencer? true
+    set adoption-source "external"
+  ]
+
+  update-nodes
+  reset-ticks
+end
+
+to transform-links
+
+
+
+  ;; 2. salvăm conexiunile existente
+let pairs sentence
+  [list end1 end2] of consumer-links
+  [list end1 end2] of influence-links
+
+  ;; 3. ștergem toate link-urile
+  ask consumer-links [ die ]
+  ask influence-links [ die ]
+
+  ;; 4. reconstruim link-urile
+  foreach pairs [ pair ->
+    let a item 0 pair
+    let b item 1 pair
+
+    ;; influencer -> follower (săgeată)
+    if ([influencer?] of a) and (not [influencer?] of b) [
+      ask a [
+        create-influence-link-to b [
+          set color violet
+          set thickness 0.3
+
+        ]
+      ]
+    ]
+
+    ;; influencer <- follower
+    if ([influencer?] of b) and (not [influencer?] of a) [
+      ask b [
+        create-influence-link-to a [
+          set color violet
+          set thickness 0.3
+
+        ]
+      ]
+    ]
+
+    ;; follower <-> follower (bidirecțional)
+    if (not [influencer?] of a) and (not [influencer?] of b) [
+      ask a [
+        create-consumer-link-with b [
+          set color gray
+          set thickness 0.1
+
+        ]
+      ]
+    ]
+
+    ;; influencer <-> influencer
+    if ([influencer?] of a) and ([influencer?] of b) [
+      ask a [
+        create-consumer-link-with b [
+          set color orange
+          set thickness 0.15
+
+        ]
+      ]
+    ]
+  ]
+
+  resize-nodes
+  update-nodes
+end
+to update-my-plots
+  if ticks <= 100 [
+    set-current-plot "Consumer States"
+    set-current-plot-pen "Unaware"
+    plot count turtles with [state = "unaware"]
+    set-current-plot-pen "Aware"
+    plot count turtles with [state = "aware"]
+    set-current-plot-pen "Adopted"
+    plot count turtles with [state = "adopted"]
+  ]
+end
+to update-influence-plot
+  if ticks <= 100 [
+    set-current-plot "Awareness Source"
+    set-current-plot-pen "influencer"
+    plot count turtles with [awareness-source = "influencer"]
+    set-current-plot-pen "peer"
+    plot count turtles with [awareness-source = "peer"]
+    set-current-plot-pen "mixed"
+    plot count turtles with [awareness-source = "mixed"]
+    set-current-plot-pen "external"
+    plot count turtles with [awareness-source = "external"]
+  ]
+end
+
+
+to setup-group-pens
+  set-current-plot "Adoption by Group"
+  clear-plot
+
+  let colors [red blue green orange violet cyan magenta]
+
+  let g 0
+  while [g < number-of-groups] [
+    create-temporary-plot-pen (word "Group " g)
+    set-plot-pen-color item (g mod length colors) colors
+    set g g + 1
+  ]
+end
+to update-group-adoption-plot
+  if ticks <= 100 [
+  set-current-plot "Adoption by Group"
+
+  ;; recreează pens-urile dacă lipsesc
+  let g 0
+  while [g < number-of-groups] [
+    let pen-name (word "Group " g)
+    if not plot-pen-exists? pen-name [
+      setup-group-pens
+      stop
+    ]
+    set g g + 1
+  ]
+
+  set g 0
+  while [g < number-of-groups] [
+    set-current-plot-pen (word "Group " g)
+
+    let total-group count turtles with [group-id = g]
+
+    ifelse total-group > 0 [
+      plot (100 * count turtles with [group-id = g and state = "adopted"] / total-group)
+    ] [
+      plot 0
+    ]
+
+    set g g + 1
+  ]
+  ]
+end
+to update-adoption-source-plot
+  if ticks <= 100 [
+    set-current-plot "Adoption Source"
+    set-current-plot-pen "Influencer"
+    plot count turtles with [adoption-source = "influencer"]
+    set-current-plot-pen "Peer"
+    plot count turtles with [adoption-source = "peer"]
+    set-current-plot-pen "Mixed"
+    plot count turtles with [adoption-source = "mixed"]
+    set-current-plot-pen "External"
+    plot count turtles with [adoption-source = "external"]
+  ]
+end
+to update-adoption-speed-plot
+  set-current-plot "New adopters this tick"
+   set-plot-y-range 0 10
+  set-current-plot-pen "Adopted %"
+  if ticks <= 100 [
+
+  plot new-adopters-this-tick / count turtles * 100
+]
+end
+to-report avg-openness-adopted
+  ifelse any? turtles with [state = "adopted"]
+    [report precision (mean [openness] of turtles with [state = "adopted"]) 2]
+    [report 0]
+end
+
+to-report avg-openness-non-adopted
+  ifelse any? turtles with [state != "adopted"]
+    [report precision (mean [openness] of turtles with [state != "adopted"]) 2]
+    [report 0]
+end
+
+to-report avg-price-adopted
+  ifelse any? turtles with [state = "adopted"]
+    [report precision (mean [price-sensitivity] of turtles with [state = "adopted"]) 2]
+    [report 0]
+end
+
+to-report avg-price-non-adopted
+  ifelse any? turtles with [state != "adopted"]
+    [report precision (mean [price-sensitivity] of turtles with [state != "adopted"]) 2]
+    [report 0]
+end
+
+to-report avg-risk-adopted
+  ifelse any? turtles with [state = "adopted"]
+    [report precision (mean [risk-aversion] of turtles with [state = "adopted"]) 2]
+    [report 0]
+end
+
+to-report avg-risk-non-adopted
+  ifelse any? turtles with [state != "adopted"]
+    [report precision (mean [risk-aversion] of turtles with [state != "adopted"]) 2]
+    [report 0]
+end
+to-report safe-group-variance
+  let group-rates []
+  let g 0
+  while [g < number-of-groups] [
+    let total-group count turtles with [group-id = g]
+    if total-group > 0 [
+      set group-rates lput (100 * count turtles with [group-id = g and state = "adopted"] / total-group) group-rates
+    ]
+    set g g + 1
+  ]
+  ifelse length group-rates >= 2
+    [report variance group-rates]
+    [report 0]
+end]]></code>
+  <widgets>
+    <view x="210" wrappingAllowedX="true" y="10" frameRate="30.0" minPycor="-16" height="433" showTickCounter="true" patchSize="13.0" fontSize="10" wrappingAllowedY="true" width="433" tickCounterLabel="ticks" maxPycor="16" updateMode="0" maxPxcor="16" minPxcor="-16"></view>
+    <slider x="6" step="0.05" y="509" max="1" width="173" display="influencer-effect" height="50" min="0" direction="Horizontal" default="0.4" variable="influencer-effect"></slider>
+    <slider x="7" step="1" y="454" max="10" width="172" display="initial-adopters" height="50" min="0" direction="Horizontal" default="2.0" variable="initial-adopters"></slider>
+    <plot x="648" autoPlotX="true" yMax="10.0" autoPlotY="true" y="232" xMin="0.0" height="217" legend="true" xMax="10.0" yMin="0.0" width="230" display="Consumer States">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Unaware" color="-16710398" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Aware" color="-13345367" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Adopted" color="-6459832" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <monitor x="210" precision="17" y="452" height="60" fontSize="11" width="100" display="Unaware">count turtles with [state = "unaware" and not influencer?]</monitor>
+    <monitor x="315" precision="17" y="452" height="60" fontSize="11" width="100" display="Aware">count turtles with [state = "aware"]</monitor>
+    <monitor x="420" precision="17" y="452" height="60" fontSize="11" width="100" display="Adopted %">100 * count turtles with [state = "adopted" and not influencer?] / count turtles with [not influencer?]</monitor>
+    <slider x="1" step="1" y="316" max="10" width="172" display="number-of-groups" height="50" min="1" direction="Horizontal" default="3.0" variable="number-of-groups"></slider>
+    <monitor x="7" precision="17" y="750" height="60" fontSize="11" width="105" display="Intra-group links">count (link-set consumer-links influence-links) with [[group-id] of end1 = [group-id] of end2]</monitor>
+    <monitor x="7" precision="17" y="685" height="60" fontSize="11" width="105" display="Inter-group links">count (link-set consumer-links influence-links) with [[group-id] of end1 != [group-id] of end2]</monitor>
+    <monitor x="525" precision="17" y="452" height="60" fontSize="11" width="100" display="Influencers">count turtles with [influencer?]</monitor>
+    <plot x="652" autoPlotX="true" yMax="10.0" autoPlotY="true" y="10" xMin="0.0" height="217" legend="true" xMax="10.0" yMin="0.0" width="230" display="Awareness Source">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="influencer" color="-5298144" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="peer" color="-14070903" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="mixed" color="-8630108" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="external" color="-987046" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <plot x="883" autoPlotX="true" yMax="10.0" autoPlotY="true" y="232" xMin="0.0" height="217" legend="true" xMax="10.0" yMin="0.0" width="230" display="Adoption by Group">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Group 0" color="-14070903" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Group 1" color="-1604481" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Group 2" color="-15575016" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <slider x="1" step="0.05" y="261" max="1" width="172" display="homophily" height="50" min="0" direction="Horizontal" default="0.9" variable="homophily"></slider>
+    <switch x="6" y="409" height="40" on="false" variable="use-influencers?" width="139" display="use-influencers?"></switch>
+    <plot x="887" autoPlotX="true" yMax="10.0" autoPlotY="true" y="10" xMin="0.0" height="217" legend="true" xMax="10.0" yMin="0.0" width="230" display="Adoption Source">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Influencer" color="-5298144" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Peer" color="-14070903" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="Mixed" color="-8630108" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="External" color="-987046" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <slider x="7" step="0.05" y="564" max="1" width="172" display="peer-effect" height="50" min="0" direction="Horizontal" default="1.0" variable="peer-effect"></slider>
+    <slider x="7" step="0.05" y="619" max="1" width="172" display="product-price" height="50" min="0" direction="Horizontal" default="0.85" variable="product-price"></slider>
+    <note x="11" y="239" backgroundDark="0" fontSize="13" width="150" markdown="false" height="18" textColorDark="-1" textColorLight="-16777216" backgroundLight="0">Network parameters</note>
+    <note x="13" y="382" backgroundDark="0" fontSize="13" width="150" markdown="false" height="18" textColorDark="-1" textColorLight="-16777216" backgroundLight="0">Diffusion parameters</note>
+    <monitor x="211" precision="17" y="517" height="60" fontSize="11" width="141" display="Ticks to 25% adoption">tick-25-adoption</monitor>
+    <monitor x="1122" precision="17" y="10" height="60" fontSize="11" width="138" display="Adopted via influencer">count turtles with [adoption-source = "influencer"]</monitor>
+    <monitor x="1122" precision="17" y="75" height="60" fontSize="11" width="109" display="Adopted via peer">count turtles with [adoption-source = "peer"]</monitor>
+    <monitor x="1122" precision="17" y="140" height="60" fontSize="11" width="129" display="Adopted external">count turtles with [adoption-source = "external"]</monitor>
+    <monitor x="1118" precision="17" y="217" height="60" fontSize="11" width="152" display="Group adoption variance">group-adoption-variance</monitor>
+    <monitor x="1118" precision="17" y="282" height="60" fontSize="11" width="144" display="Max group adoption %">max [100 * count turtles with [group-id = group-id and state = "adopted"] / count turtles with [group-id = group-id]] of turtles</monitor>
+    <button x="0" y="2" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="82" display="setup">setup</button>
+    <button x="0" y="47" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="85" display="add-node">create-network</button>
+    <button x="90" y="1" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="112" display="create-network">create-network</button>
+    <button x="106" y="48" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="77" display="Diffusion">go
+</button>
+    <button x="11" y="93" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="123" display="reset-information">reset-information</button>
+    <button x="10" y="137" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="131">set-initial-adopters</button>
+    <button x="9" y="187" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="140" display="calculate-influencers">calculate-influencers</button>
+    <monitor x="358" precision="17" y="518" height="60" fontSize="11" width="141" display="Ticks to 50% adoption">tick-50-adoption</monitor>
+    <monitor x="504" precision="17" y="519" height="60" fontSize="11" width="141" display="Ticks to 75% adoption">tick-75-adoption</monitor>
+    <monitor x="212" precision="17" y="580" height="60" fontSize="11" width="123" display="influencers adopted">count turtles with [influencer? and state = "adopted" ]</monitor>
+    <plot x="650" autoPlotX="true" yMax="100.0" autoPlotY="true" yAxis="# of nodes" y="453" xMin="0.0" height="175" legend="false" xMax="1000.0" yMin="0.0" width="230" xAxis="Degree" display="Degree distribution">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="1" display="default" color="-8431303" legend="true">
+        <setup></setup>
+        <update>if not any? turtles [ stop ]
+let max-degree max [count link-neighbors] of turtles
+plot-pen-reset
+set-plot-x-range 1 (max-degree + 1)
+histogram [count link-neighbors] of turtles</update>
+      </pen>
+    </plot>
+    <plot x="884" autoPlotX="true" yMax="10.0" autoPlotY="true" yAxis="Adopters" y="453" xMin="0.0" height="191" legend="true" xMax="100.0" yMin="0.0" width="230" xAxis="Ticks" display="New adopters this tick">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="Adopted %" color="-8275240" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+    <note x="207" y="666" backgroundDark="0" fontSize="14" width="150" markdown="false" height="18" textColorDark="-1" textColorLight="-16777216" backgroundLight="0"><![CDATA[Adopters->]]></note>
+    <note x="207" y="742" backgroundDark="0" fontSize="14" width="150" markdown="false" height="18" textColorDark="-1" textColorLight="-16777216" backgroundLight="0"><![CDATA[Non-adopters->]]></note>
+    <monitor x="372" precision="17" y="651" height="60" fontSize="11" width="100" display="Avg openness">avg-openness-adopted</monitor>
+    <monitor x="481" precision="17" y="650" height="60" fontSize="11" width="124" display="Avg price sensitivity">avg-price-adopted</monitor>
+    <monitor x="616" precision="17" y="651" height="60" fontSize="11" width="108" display="Avg risk aversion">avg-risk-adopted</monitor>
+    <monitor x="374" precision="17" y="724" height="60" fontSize="11" width="100" display="Avg openness">avg-openness-non-adopted</monitor>
+    <monitor x="482" precision="17" y="722" height="60" fontSize="11" width="124" display="Avg price sensitivity">avg-price-non-adopted</monitor>
+    <monitor x="619" precision="17" y="723" height="60" fontSize="11" width="108" display="Avg risk aversion">avg-risk-non-adopted</monitor>
+  </widgets>
+  <info>## WHAT IS IT?
+
+(a general understanding of what the model is trying to show or explain)
+
+## HOW IT WORKS
+
+(what rules the agents use to create the overall behavior of the model)
+
+## HOW TO USE IT
+
+(how to use the model, including a description of each of the items in the Interface tab)
+
+## THINGS TO NOTICE
+
+(suggested things for the user to notice while running the model)
+
+## THINGS TO TRY
+
+(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
+
+## EXTENDING THE MODEL
+
+(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
+
+## NETLOGO FEATURES
+
+(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
+
+## RELATED MODELS
+
+(models in the NetLogo Models Library and elsewhere which are of related interest)
+
+## CREDITS AND REFERENCES
+
+(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)</info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5"></point>
+        <point x="40" y="250"></point>
+        <point x="150" y="205"></point>
+        <point x="260" y="250"></point>
+      </polygon>
+    </shape>
+    <shape name="airplane" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="135" y="15"></point>
+        <point x="120" y="60"></point>
+        <point x="120" y="105"></point>
+        <point x="15" y="165"></point>
+        <point x="15" y="195"></point>
+        <point x="120" y="180"></point>
+        <point x="135" y="240"></point>
+        <point x="105" y="270"></point>
+        <point x="120" y="285"></point>
+        <point x="150" y="270"></point>
+        <point x="180" y="285"></point>
+        <point x="210" y="270"></point>
+        <point x="165" y="240"></point>
+        <point x="180" y="180"></point>
+        <point x="285" y="195"></point>
+        <point x="285" y="165"></point>
+        <point x="180" y="105"></point>
+        <point x="180" y="60"></point>
+        <point x="165" y="15"></point>
+      </polygon>
+    </shape>
+    <shape name="arrow" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="0" y="150"></point>
+        <point x="105" y="150"></point>
+        <point x="105" y="293"></point>
+        <point x="195" y="293"></point>
+        <point x="195" y="150"></point>
+        <point x="300" y="150"></point>
+      </polygon>
+    </shape>
+    <shape name="box" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="285"></point>
+        <point x="285" y="225"></point>
+        <point x="285" y="75"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="135"></point>
+        <point x="15" y="75"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="75"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="75"></point>
+        <point x="15" y="225"></point>
+        <point x="150" y="285"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <line endX="150" startY="285" marked="false" color="255" endY="135" startX="150"></line>
+      <line endX="15" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+      <line endX="285" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+    </shape>
+    <shape name="bug" rotatable="true" editableColorIndex="0">
+      <circle x="96" y="182" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="110" y="127" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <circle x="110" y="75" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <line endX="80" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+      <line endX="220" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+    </shape>
+    <shape name="butterfly" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="209" y="199"></point>
+        <point x="225" y="225"></point>
+        <point x="225" y="255"></point>
+        <point x="195" y="270"></point>
+        <point x="165" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="89" y="198"></point>
+        <point x="75" y="225"></point>
+        <point x="75" y="255"></point>
+        <point x="105" y="270"></point>
+        <point x="135" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="139" y="148"></point>
+        <point x="100" y="105"></point>
+        <point x="55" y="90"></point>
+        <point x="25" y="90"></point>
+        <point x="10" y="105"></point>
+        <point x="10" y="135"></point>
+        <point x="25" y="180"></point>
+        <point x="40" y="195"></point>
+        <point x="85" y="194"></point>
+        <point x="139" y="163"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="162" y="150"></point>
+        <point x="200" y="105"></point>
+        <point x="245" y="90"></point>
+        <point x="275" y="90"></point>
+        <point x="290" y="105"></point>
+        <point x="290" y="135"></point>
+        <point x="275" y="180"></point>
+        <point x="260" y="195"></point>
+        <point x="215" y="195"></point>
+        <point x="162" y="165"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="135" y="225"></point>
+        <point x="120" y="150"></point>
+        <point x="135" y="120"></point>
+        <point x="150" y="105"></point>
+        <point x="165" y="120"></point>
+        <point x="180" y="150"></point>
+        <point x="165" y="225"></point>
+      </polygon>
+      <circle x="135" y="90" marked="false" color="255" diameter="30" filled="true"></circle>
+      <line endX="195" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+      <line endX="105" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+    </shape>
+    <shape name="car" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="300" y="180"></point>
+        <point x="279" y="164"></point>
+        <point x="261" y="144"></point>
+        <point x="240" y="135"></point>
+        <point x="226" y="132"></point>
+        <point x="213" y="106"></point>
+        <point x="203" y="84"></point>
+        <point x="185" y="63"></point>
+        <point x="159" y="50"></point>
+        <point x="135" y="50"></point>
+        <point x="75" y="60"></point>
+        <point x="0" y="150"></point>
+        <point x="0" y="165"></point>
+        <point x="0" y="225"></point>
+        <point x="300" y="225"></point>
+        <point x="300" y="180"></point>
+      </polygon>
+      <circle x="180" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <circle x="30" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="162" y="80"></point>
+        <point x="132" y="78"></point>
+        <point x="134" y="135"></point>
+        <point x="209" y="135"></point>
+        <point x="194" y="105"></point>
+        <point x="189" y="96"></point>
+        <point x="180" y="89"></point>
+      </polygon>
+      <circle x="47" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+      <circle x="195" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+    </shape>
+    <shape name="circle" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="circle 2" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+    </shape>
+    <shape name="cow" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="200" y="193"></point>
+        <point x="197" y="249"></point>
+        <point x="179" y="249"></point>
+        <point x="177" y="196"></point>
+        <point x="166" y="187"></point>
+        <point x="140" y="189"></point>
+        <point x="93" y="191"></point>
+        <point x="78" y="179"></point>
+        <point x="72" y="211"></point>
+        <point x="49" y="209"></point>
+        <point x="48" y="181"></point>
+        <point x="37" y="149"></point>
+        <point x="25" y="120"></point>
+        <point x="25" y="89"></point>
+        <point x="45" y="72"></point>
+        <point x="103" y="84"></point>
+        <point x="179" y="75"></point>
+        <point x="198" y="76"></point>
+        <point x="252" y="64"></point>
+        <point x="272" y="81"></point>
+        <point x="293" y="103"></point>
+        <point x="285" y="121"></point>
+        <point x="255" y="121"></point>
+        <point x="242" y="118"></point>
+        <point x="224" y="167"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="73" y="210"></point>
+        <point x="86" y="251"></point>
+        <point x="62" y="249"></point>
+        <point x="48" y="208"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="25" y="114"></point>
+        <point x="16" y="195"></point>
+        <point x="9" y="204"></point>
+        <point x="23" y="213"></point>
+        <point x="25" y="200"></point>
+        <point x="39" y="123"></point>
+      </polygon>
+    </shape>
+    <shape name="cylinder" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="dot" rotatable="false" editableColorIndex="0">
+      <circle x="90" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+    </shape>
+    <shape name="face happy" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="90" y="239"></point>
+        <point x="62" y="213"></point>
+        <point x="47" y="191"></point>
+        <point x="67" y="179"></point>
+        <point x="90" y="203"></point>
+        <point x="109" y="218"></point>
+        <point x="150" y="225"></point>
+        <point x="192" y="218"></point>
+        <point x="210" y="203"></point>
+        <point x="227" y="181"></point>
+        <point x="251" y="194"></point>
+        <point x="236" y="217"></point>
+        <point x="212" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="face neutral" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="7" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <rectangle endX="240" startY="195" marked="false" color="255" endY="225" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="face sad" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="168"></point>
+        <point x="90" y="184"></point>
+        <point x="62" y="210"></point>
+        <point x="47" y="232"></point>
+        <point x="67" y="244"></point>
+        <point x="90" y="220"></point>
+        <point x="109" y="205"></point>
+        <point x="150" y="198"></point>
+        <point x="192" y="205"></point>
+        <point x="210" y="220"></point>
+        <point x="227" y="242"></point>
+        <point x="251" y="229"></point>
+        <point x="236" y="206"></point>
+        <point x="212" y="183"></point>
+      </polygon>
+    </shape>
+    <shape name="fish" rotatable="false" editableColorIndex="0">
+      <polygon color="-1" filled="true" marked="false">
+        <point x="44" y="131"></point>
+        <point x="21" y="87"></point>
+        <point x="15" y="86"></point>
+        <point x="0" y="120"></point>
+        <point x="15" y="150"></point>
+        <point x="0" y="180"></point>
+        <point x="13" y="214"></point>
+        <point x="20" y="212"></point>
+        <point x="45" y="166"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="135" y="195"></point>
+        <point x="119" y="235"></point>
+        <point x="95" y="218"></point>
+        <point x="76" y="210"></point>
+        <point x="46" y="204"></point>
+        <point x="60" y="165"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="75" y="45"></point>
+        <point x="83" y="77"></point>
+        <point x="71" y="103"></point>
+        <point x="86" y="114"></point>
+        <point x="166" y="78"></point>
+        <point x="135" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="136"></point>
+        <point x="151" y="77"></point>
+        <point x="226" y="81"></point>
+        <point x="280" y="119"></point>
+        <point x="292" y="146"></point>
+        <point x="292" y="160"></point>
+        <point x="287" y="170"></point>
+        <point x="270" y="195"></point>
+        <point x="195" y="210"></point>
+        <point x="151" y="212"></point>
+        <point x="30" y="166"></point>
+      </polygon>
+      <circle x="215" y="106" marked="false" color="255" diameter="30" filled="true"></circle>
+    </shape>
+    <shape name="flag" rotatable="false" editableColorIndex="0">
+      <rectangle endX="75" startY="15" marked="true" color="-1920102913" endY="300" startX="60" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="90" y="150"></point>
+        <point x="270" y="90"></point>
+        <point x="90" y="30"></point>
+      </polygon>
+      <line endX="90" startY="135" marked="true" color="-1920102913" endY="135" startX="75"></line>
+      <line endX="90" startY="45" marked="true" color="-1920102913" endY="45" startX="75"></line>
+    </shape>
+    <shape name="flower" rotatable="false" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="135" y="120"></point>
+        <point x="165" y="165"></point>
+        <point x="180" y="210"></point>
+        <point x="180" y="240"></point>
+        <point x="150" y="300"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="240"></point>
+        <point x="195" y="195"></point>
+        <point x="165" y="135"></point>
+      </polygon>
+      <circle x="85" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="147" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="192" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="85" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="70" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="25" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="96" y="51" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="113" y="68" marked="false" color="255" diameter="74" filled="true"></circle>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="189" y="233"></point>
+        <point x="219" y="188"></point>
+        <point x="249" y="173"></point>
+        <point x="279" y="188"></point>
+        <point x="234" y="218"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="180" y="255"></point>
+        <point x="150" y="210"></point>
+        <point x="105" y="210"></point>
+        <point x="75" y="240"></point>
+        <point x="135" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="house" rotatable="false" editableColorIndex="0">
+      <rectangle endX="255" startY="120" marked="true" color="-1920102913" endY="285" startX="45" filled="true"></rectangle>
+      <rectangle endX="180" startY="210" marked="false" color="255" endY="285" startX="120" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="120"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+      <line endX="270" startY="120" marked="false" color="255" endY="120" startX="30"></line>
+    </shape>
+    <shape name="leaf" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="210"></point>
+        <point x="135" y="195"></point>
+        <point x="120" y="210"></point>
+        <point x="60" y="210"></point>
+        <point x="30" y="195"></point>
+        <point x="60" y="180"></point>
+        <point x="60" y="165"></point>
+        <point x="15" y="135"></point>
+        <point x="30" y="120"></point>
+        <point x="15" y="105"></point>
+        <point x="40" y="104"></point>
+        <point x="45" y="90"></point>
+        <point x="60" y="90"></point>
+        <point x="90" y="105"></point>
+        <point x="105" y="120"></point>
+        <point x="120" y="120"></point>
+        <point x="105" y="60"></point>
+        <point x="120" y="60"></point>
+        <point x="135" y="30"></point>
+        <point x="150" y="15"></point>
+        <point x="165" y="30"></point>
+        <point x="180" y="60"></point>
+        <point x="195" y="60"></point>
+        <point x="180" y="120"></point>
+        <point x="195" y="120"></point>
+        <point x="210" y="105"></point>
+        <point x="240" y="90"></point>
+        <point x="255" y="90"></point>
+        <point x="263" y="104"></point>
+        <point x="285" y="105"></point>
+        <point x="270" y="120"></point>
+        <point x="285" y="135"></point>
+        <point x="240" y="165"></point>
+        <point x="240" y="180"></point>
+        <point x="270" y="195"></point>
+        <point x="240" y="210"></point>
+        <point x="180" y="210"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="195"></point>
+        <point x="135" y="240"></point>
+        <point x="120" y="255"></point>
+        <point x="105" y="255"></point>
+        <point x="105" y="285"></point>
+        <point x="135" y="285"></point>
+        <point x="165" y="240"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+    </shape>
+    <shape name="line" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="300" startX="150"></line>
+    </shape>
+    <shape name="line half" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="150" startX="150"></line>
+    </shape>
+    <shape name="pentagon" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="15"></point>
+        <point x="15" y="120"></point>
+        <point x="60" y="285"></point>
+        <point x="240" y="285"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+    </shape>
+    <shape name="person" rotatable="false" editableColorIndex="0">
+      <circle x="110" y="5" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="120" y="195"></point>
+        <point x="90" y="285"></point>
+        <point x="105" y="300"></point>
+        <point x="135" y="300"></point>
+        <point x="150" y="225"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="300"></point>
+        <point x="210" y="285"></point>
+        <point x="180" y="195"></point>
+        <point x="195" y="90"></point>
+      </polygon>
+      <rectangle endX="172" startY="79" marked="true" color="-1920102913" endY="94" startX="127" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="195" y="90"></point>
+        <point x="240" y="150"></point>
+        <point x="225" y="180"></point>
+        <point x="165" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="60" y="150"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="105"></point>
+      </polygon>
+    </shape>
+    <shape name="plant" rotatable="false" editableColorIndex="0">
+      <rectangle endX="165" startY="90" marked="true" color="-1920102913" endY="300" startX="135" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="255"></point>
+        <point x="90" y="210"></point>
+        <point x="45" y="195"></point>
+        <point x="75" y="255"></point>
+        <point x="135" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="255"></point>
+        <point x="210" y="210"></point>
+        <point x="255" y="195"></point>
+        <point x="225" y="255"></point>
+        <point x="165" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="180"></point>
+        <point x="90" y="135"></point>
+        <point x="45" y="120"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="180"></point>
+        <point x="165" y="210"></point>
+        <point x="225" y="180"></point>
+        <point x="255" y="120"></point>
+        <point x="210" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="105"></point>
+        <point x="90" y="60"></point>
+        <point x="45" y="45"></point>
+        <point x="75" y="105"></point>
+        <point x="135" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="105"></point>
+        <point x="165" y="135"></point>
+        <point x="225" y="105"></point>
+        <point x="255" y="45"></point>
+        <point x="210" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="90"></point>
+        <point x="120" y="45"></point>
+        <point x="150" y="15"></point>
+        <point x="180" y="45"></point>
+        <point x="165" y="90"></point>
+      </polygon>
+    </shape>
+    <shape name="sheep" rotatable="false" editableColorIndex="15">
+      <circle x="203" y="65" marked="true" color="-1" diameter="88" filled="true"></circle>
+      <circle x="70" y="65" marked="true" color="-1" diameter="162" filled="true"></circle>
+      <circle x="150" y="105" marked="true" color="-1" diameter="120" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="218" y="120"></point>
+        <point x="240" y="165"></point>
+        <point x="255" y="165"></point>
+        <point x="278" y="120"></point>
+      </polygon>
+      <circle x="214" y="72" marked="false" color="-1920102913" diameter="67" filled="true"></circle>
+      <rectangle endX="179" startY="223" marked="true" color="-1" endY="298" startX="164" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="45" y="285"></point>
+        <point x="30" y="285"></point>
+        <point x="30" y="240"></point>
+        <point x="15" y="195"></point>
+        <point x="45" y="210"></point>
+      </polygon>
+      <circle x="3" y="83" marked="true" color="-1" diameter="150" filled="true"></circle>
+      <rectangle endX="80" startY="221" marked="true" color="-1" endY="296" startX="65" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="195" y="285"></point>
+        <point x="210" y="285"></point>
+        <point x="210" y="240"></point>
+        <point x="240" y="210"></point>
+        <point x="195" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="276" y="85"></point>
+        <point x="285" y="105"></point>
+        <point x="302" y="99"></point>
+        <point x="294" y="83"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="219" y="85"></point>
+        <point x="210" y="105"></point>
+        <point x="193" y="99"></point>
+        <point x="201" y="83"></point>
+      </polygon>
+    </shape>
+    <shape name="square" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+    </shape>
+    <shape name="square 2" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+      <rectangle endX="240" startY="60" marked="false" color="255" endY="240" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="star" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="1"></point>
+        <point x="185" y="108"></point>
+        <point x="298" y="108"></point>
+        <point x="207" y="175"></point>
+        <point x="242" y="282"></point>
+        <point x="151" y="216"></point>
+        <point x="59" y="282"></point>
+        <point x="94" y="175"></point>
+        <point x="3" y="108"></point>
+        <point x="116" y="108"></point>
+      </polygon>
+    </shape>
+    <shape name="target" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <circle x="60" y="60" marked="true" color="-1920102913" diameter="180" filled="true"></circle>
+      <circle x="90" y="90" marked="false" color="255" diameter="120" filled="true"></circle>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+    </shape>
+    <shape name="tree" rotatable="false" editableColorIndex="0">
+      <circle x="118" y="3" marked="true" color="-1920102913" diameter="94" filled="true"></circle>
+      <rectangle endX="180" startY="195" marked="false" color="-1653716737" endY="300" startX="120" filled="true"></rectangle>
+      <circle x="65" y="21" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="116" y="41" marked="true" color="-1920102913" diameter="127" filled="true"></circle>
+      <circle x="45" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+      <circle x="104" y="74" marked="true" color="-1920102913" diameter="152" filled="true"></circle>
+    </shape>
+    <shape name="triangle" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+    </shape>
+    <shape name="triangle 2" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="151" y="99"></point>
+        <point x="225" y="223"></point>
+        <point x="75" y="224"></point>
+      </polygon>
+    </shape>
+    <shape name="truck" rotatable="false" editableColorIndex="0">
+      <rectangle endX="195" startY="45" marked="true" color="-1920102913" endY="187" startX="4" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="296" y="193"></point>
+        <point x="296" y="150"></point>
+        <point x="259" y="134"></point>
+        <point x="244" y="104"></point>
+        <point x="208" y="104"></point>
+        <point x="207" y="194"></point>
+      </polygon>
+      <rectangle endX="195" startY="60" marked="false" color="-1" endY="105" startX="195" filled="true"></rectangle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="238" y="112"></point>
+        <point x="252" y="141"></point>
+        <point x="219" y="141"></point>
+        <point x="218" y="112"></point>
+      </polygon>
+      <circle x="234" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <rectangle endX="214" startY="185" marked="true" color="-1920102913" endY="194" startX="181" filled="true"></rectangle>
+      <circle x="144" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="144" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="234" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+    </shape>
+    <shape name="turtle" rotatable="true" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="215" y="204"></point>
+        <point x="240" y="233"></point>
+        <point x="246" y="254"></point>
+        <point x="228" y="266"></point>
+        <point x="215" y="252"></point>
+        <point x="193" y="210"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="195" y="90"></point>
+        <point x="225" y="75"></point>
+        <point x="245" y="75"></point>
+        <point x="260" y="89"></point>
+        <point x="269" y="108"></point>
+        <point x="261" y="124"></point>
+        <point x="240" y="105"></point>
+        <point x="225" y="105"></point>
+        <point x="210" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="105" y="90"></point>
+        <point x="75" y="75"></point>
+        <point x="55" y="75"></point>
+        <point x="40" y="89"></point>
+        <point x="31" y="108"></point>
+        <point x="39" y="124"></point>
+        <point x="60" y="105"></point>
+        <point x="75" y="105"></point>
+        <point x="90" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="132" y="85"></point>
+        <point x="134" y="64"></point>
+        <point x="107" y="51"></point>
+        <point x="108" y="17"></point>
+        <point x="150" y="2"></point>
+        <point x="192" y="18"></point>
+        <point x="192" y="52"></point>
+        <point x="169" y="65"></point>
+        <point x="172" y="87"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="85" y="204"></point>
+        <point x="60" y="233"></point>
+        <point x="54" y="254"></point>
+        <point x="72" y="266"></point>
+        <point x="85" y="252"></point>
+        <point x="107" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="119" y="75"></point>
+        <point x="179" y="75"></point>
+        <point x="209" y="101"></point>
+        <point x="224" y="135"></point>
+        <point x="220" y="225"></point>
+        <point x="175" y="261"></point>
+        <point x="128" y="261"></point>
+        <point x="81" y="224"></point>
+        <point x="74" y="135"></point>
+        <point x="88" y="99"></point>
+      </polygon>
+    </shape>
+    <shape name="wheel" rotatable="false" editableColorIndex="0">
+      <circle x="3" y="3" marked="true" color="-1920102913" diameter="294" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <line endX="150" startY="285" marked="true" color="-1920102913" endY="15" startX="150"></line>
+      <line endX="285" startY="150" marked="true" color="-1920102913" endY="150" startX="15"></line>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+      <line endX="79" startY="40" marked="true" color="-1920102913" endY="269" startX="216"></line>
+      <line endX="269" startY="84" marked="true" color="-1920102913" endY="221" startX="40"></line>
+      <line endX="269" startY="216" marked="true" color="-1920102913" endY="79" startX="40"></line>
+      <line endX="221" startY="40" marked="true" color="-1920102913" endY="269" startX="84"></line>
+    </shape>
+    <shape name="wolf" rotatable="false" editableColorIndex="0">
+      <polygon color="255" filled="true" marked="false">
+        <point x="253" y="133"></point>
+        <point x="245" y="131"></point>
+        <point x="245" y="133"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="2" y="194"></point>
+        <point x="13" y="197"></point>
+        <point x="30" y="191"></point>
+        <point x="38" y="193"></point>
+        <point x="38" y="205"></point>
+        <point x="20" y="226"></point>
+        <point x="20" y="257"></point>
+        <point x="27" y="265"></point>
+        <point x="38" y="266"></point>
+        <point x="40" y="260"></point>
+        <point x="31" y="253"></point>
+        <point x="31" y="230"></point>
+        <point x="60" y="206"></point>
+        <point x="68" y="198"></point>
+        <point x="75" y="209"></point>
+        <point x="66" y="228"></point>
+        <point x="65" y="243"></point>
+        <point x="82" y="261"></point>
+        <point x="84" y="268"></point>
+        <point x="100" y="267"></point>
+        <point x="103" y="261"></point>
+        <point x="77" y="239"></point>
+        <point x="79" y="231"></point>
+        <point x="100" y="207"></point>
+        <point x="98" y="196"></point>
+        <point x="119" y="201"></point>
+        <point x="143" y="202"></point>
+        <point x="160" y="195"></point>
+        <point x="166" y="210"></point>
+        <point x="172" y="213"></point>
+        <point x="173" y="238"></point>
+        <point x="167" y="251"></point>
+        <point x="160" y="248"></point>
+        <point x="154" y="265"></point>
+        <point x="169" y="264"></point>
+        <point x="178" y="247"></point>
+        <point x="186" y="240"></point>
+        <point x="198" y="260"></point>
+        <point x="200" y="271"></point>
+        <point x="217" y="271"></point>
+        <point x="219" y="262"></point>
+        <point x="207" y="258"></point>
+        <point x="195" y="230"></point>
+        <point x="192" y="198"></point>
+        <point x="210" y="184"></point>
+        <point x="227" y="164"></point>
+        <point x="242" y="144"></point>
+        <point x="259" y="145"></point>
+        <point x="284" y="151"></point>
+        <point x="277" y="141"></point>
+        <point x="293" y="140"></point>
+        <point x="299" y="134"></point>
+        <point x="297" y="127"></point>
+        <point x="273" y="119"></point>
+        <point x="270" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="-1" y="195"></point>
+        <point x="14" y="180"></point>
+        <point x="36" y="166"></point>
+        <point x="40" y="153"></point>
+        <point x="53" y="140"></point>
+        <point x="82" y="131"></point>
+        <point x="134" y="133"></point>
+        <point x="159" y="126"></point>
+        <point x="188" y="115"></point>
+        <point x="227" y="108"></point>
+        <point x="236" y="102"></point>
+        <point x="238" y="98"></point>
+        <point x="268" y="86"></point>
+        <point x="269" y="92"></point>
+        <point x="281" y="87"></point>
+        <point x="269" y="103"></point>
+        <point x="269" y="113"></point>
+      </polygon>
+    </shape>
+    <shape name="x" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="270" y="75"></point>
+        <point x="225" y="30"></point>
+        <point x="30" y="225"></point>
+        <point x="75" y="270"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="75"></point>
+        <point x="75" y="30"></point>
+        <point x="270" y="225"></point>
+        <point x="225" y="270"></point>
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0"></dash>
+          <dash value="0.0"></dash>
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+  <experiments>
+    <experiment name="experiment 2 - efectul influencerilor" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup 
+repeat 198 [create-network] 
+calculate-influencers 
+set-initial-adopters</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[new-adopters-this-tick = 0 and ticks > 5]]></exitCondition>
+      <metrics>
+        <metric>count turtles with [state = "adopted"] / count turtles * 100</metric>
+        <metric>group-adoption-variance</metric>
+        <metric>avg-openness-adopted</metric>
+        <metric>avg-risk-adopted</metric>
+        <metric>avg-price-adopted</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="homophily">
+          <value value="0.5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="number-of-groups">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="use-influencers?">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-adopters">
+          <value value="5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="peer-effect">
+          <value value="0.3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="product-price">
+          <value value="0.7"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="influencer-effect" first="0.3" step="0.3" last="1"></steppedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="experiment 3- homofilie" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true">
+      <setup>setup 
+repeat 198 [create-network] 
+calculate-influencers 
+set-initial-adopters</setup>
+      <go>go</go>
+      <exitCondition><![CDATA[new-adopters-this-tick = 0 and ticks > 20]]></exitCondition>
+      <metrics>
+        <metric>count turtles with [state = "adopted"] / count turtles * 100</metric>
+        <metric>safe-group-variance</metric>
+        <metric>avg-openness-adopted</metric>
+        <metric>avg-risk-adopted</metric>
+        <metric>avg-price-adopted</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="peer-effect">
+          <value value="0.75"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="use-influencers?">
+          <value value="false"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="product-price">
+          <value value="0.35"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-adopters">
+          <value value="5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="number-of-groups">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="homophily" first="0.2" step="0.35" last="0.9"></steppedValueSet>
+        <enumeratedValueSet variable="influencer-effect">
+          <value value="0.7"></value>
+        </enumeratedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="experiment 4 - variatia grupurilor" repetitions="30" sequentialRunOrder="true" runMetricsEveryStep="true" timeLimit="200">
+      <setup>setup 
+repeat 198 [ create-network ] 
+calculate-influencers 
+set-initial-adopters</setup>
+      <go>go</go>
+      <exitCondition>not any? turtles with [state = "unaware" or state = "aware"]</exitCondition>
+      <metrics>
+        <metric>count turtles with [state = "adopted"] / count turtles * 100</metric>
+        <metric>tick-25-adoption</metric>
+        <metric>tick-50-adoption</metric>
+        <metric>tick-75-adoption</metric>
+        <metric>avg-openness-adopted</metric>
+        <metric>avg-risk-adopted</metric>
+        <metric>safe-group-variance</metric>
+        <metric>avg-openness-non-adopted</metric>
+        <metric>avg-risk-non-adopted</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="peer-effect">
+          <value value="0.7"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="use-influencers?">
+          <value value="true"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="product-price">
+          <value value="0.75"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="initial-adopters">
+          <value value="5"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="number-of-groups">
+          <value value="3"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="homophily">
+          <value value="0.85"></value>
+        </enumeratedValueSet>
+        <enumeratedValueSet variable="influencer-effect">
+          <value value="0.8"></value>
+        </enumeratedValueSet>
+      </constants>
+    </experiment>
+  </experiments>
+</model>
